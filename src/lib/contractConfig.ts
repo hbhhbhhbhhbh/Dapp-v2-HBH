@@ -6,7 +6,7 @@
  */
 
 // ⚠️ 显式声明为 string 类型，避免 TypeScript 字面量类型推断错误
-export const CONTRACT_ADDRESS: string = '0x9d7a7eF24CDd32Af4287BA8DC7f2fd8ADBd65186';
+export const CONTRACT_ADDRESS: string = '0x0DE79677227D79b70dC03aBD8339DA01d1dF1d16';
 
 // 务必使用 Dapp_副本 中完整的 ABI，特别是包含 claimLimit 和 tokenIdForSerialHash 的部分
 export const CONTRACT_ABI = [

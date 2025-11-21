@@ -1,6 +1,6 @@
 // 文件路径: src/components/PublicVerification.tsx
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
@@ -9,71 +9,85 @@ import { Alert, AlertDescription } from './ui/alert';
 import ProductLifecycleTimeline from './ProductLifecycleTimeline';
 import { blockchainService } from '../lib/blockchainService';
 
-export default function PublicVerification() {
-  const [searchQuery, setSearchQuery] = useState('');
+interface PublicVerificationProps {
+  defaultId?: string;
+}
+
+export default function PublicVerification({ defaultId = '' }: PublicVerificationProps) {
+  const [searchQuery, setSearchQuery] = useState(defaultId);
   const [searchResult, setSearchResult] = useState<'found' | 'not-found' | null>(null);
-  // 用于存储适配后的产品数据对象
   const [foundProduct, setFoundProduct] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
+  useEffect(() => {
+    if (defaultId) {
+      setSearchQuery(defaultId);
+      handleSearch(defaultId);
+    }
+  }, [defaultId]);
+
+  const handleSearch = async (queryOverride?: string) => {
+    const query = queryOverride || searchQuery;
+    if (!query?.trim()) return;
+    
     setIsLoading(true);
     setSearchResult(null);
     setFoundProduct(null);
 
     try {
-      // 确保连接（对于只读操作，通常需要一个Provider，这里假设 connectWallet 会处理）
-      // 在实际生产中，最好在 blockchainService 中初始化一个默认的 JsonRpcProvider
       if (!blockchainService.isConnected()) {
          await blockchainService.connectWallet();
       }
 
-      let tokenId = searchQuery.trim();
+      const input = query.trim();
+      let targetTokenId: string | null = null;
 
-      // 1. 如果输入不是纯数字，尝试作为序列号处理
-      if (isNaN(Number(tokenId))) {
-        console.log("Searching by serial number:", tokenId);
-        const id = await blockchainService.getTokenIdBySerial(tokenId);
-        if (!id) {
-          setSearchResult('not-found');
-          setIsLoading(false);
-          return;
-        }
-        tokenId = id;
+      // ✅ 逻辑升级：优先尝试作为序列号查询
+      // 这样即使用户输入的是数字 "123456"，我们也会先看有没有这个序列号的产品
+      const idFromSerial = await blockchainService.getTokenIdBySerial(input);
+      
+      if (idFromSerial) {
+        console.log(`Search '${input}' matched Serial Number -> Token ID ${idFromSerial}`);
+        targetTokenId = idFromSerial;
+      } 
+      // 如果不是序列号，且输入本身是数字，则尝试作为 Token ID
+      else if (!isNaN(Number(input))) {
+        console.log(`Search '${input}' treated as Token ID`);
+        targetTokenId = input;
       }
 
-      // 2. 获取产品详情
-      const info = await blockchainService.getProductInfo(tokenId);
-      
-      // 3. 获取历史事件
-      const history = await blockchainService.getProductHistory(tokenId);
-      
-      // 4. 获取当前所有者
-      const currentOwner = await blockchainService.contract.ownerOf(tokenId);
+      if (!targetTokenId) {
+        console.warn("Input is not a valid Serial Number and not a Number ID");
+        setSearchResult('not-found');
+        setIsLoading(false);
+        return;
+      }
 
-      // 5. 组装成 ProductLifecycleTimeline 组件需要的数据结构
+      // 获取详情
+      const info = await blockchainService.getProductInfo(targetTokenId);
+      // 获取全量历史 (包含铸造、维修等)
+      const history = await blockchainService.getProductHistory(targetTokenId);
+      const currentOwner = await blockchainService.contract!.ownerOf(targetTokenId);
+
       const productData = {
-        tokenId: tokenId,
+        tokenId: targetTokenId,
         serialNumber: info.serialNumber,
         model: info.model,
-        manufacturer: info.manufacturer, // 这里可以加一个地址转名称的映射，暂时直接显示地址
+        manufacturer: info.manufacturer, 
         manufacturerAddress: info.manufacturer,
         currentOwner: currentOwner,
         currentOwnerAddress: currentOwner,
-        // 将 BigInt 时间戳转换为 ISO 字符串
         registrationDate: new Date(Number(info.manufactureDate) * 1000).toISOString(),
         warrantyStart: info.warrantyStart > 0 ? new Date(Number(info.warrantyStart) * 1000).toISOString() : '',
         warrantyExpiration: info.warrantyExpiration > 0 ? new Date(Number(info.warrantyExpiration) * 1000).toISOString() : '',
         warrantyClaimCount: Number(info.claimCount),
-        // 适配历史事件格式
         history: history.map((e: any) => ({
            type: mapEventType(e.type),
            timestamp: new Date(e.timestamp * 1000).toISOString(),
            description: generateEventDescription(e),
            txHash: e.transactionHash,
-           from: e.data?.from, // 可选
-           to: e.data?.to,     // 可选
+           from: e.data?.from,
+           to: e.data?.to,
            status: e.data?.approved ? 'approved' : (e.type === 'WarrantyClaimProcessed' ? 'rejected' : undefined)
         }))
       };
@@ -89,7 +103,6 @@ export default function PublicVerification() {
     }
   };
 
-  // 辅助函数：映射事件类型到 UI 类型
   const mapEventType = (chainType: string) => {
     switch(chainType) {
       case 'ProductRegistered': return 'manufacture';
@@ -100,7 +113,6 @@ export default function PublicVerification() {
     }
   };
 
-  // 辅助函数：生成描述
   const generateEventDescription = (e: any) => {
     if (e.type === 'ProductRegistered') return 'Product registered by manufacturer';
     if (e.type === 'Transfer') return `Transferred from ${e.data.from?.slice(0,6)}... to ${e.data.to?.slice(0,6)}...`;
@@ -119,7 +131,7 @@ export default function PublicVerification() {
         </div>
         <h2 className="text-slate-900 text-3xl">Verify Your Product</h2>
         <p className="text-slate-600 max-w-2xl mx-auto">
-          Enter a Product ID or Serial Number to verify authenticity and view the complete blockchain history.
+          Enter a <strong>Product ID</strong> (e.g. 1) or <strong>Serial Number</strong> (e.g. SN-1234) to verify authenticity.
         </p>
       </div>
 
@@ -130,7 +142,7 @@ export default function PublicVerification() {
             Search Product
           </CardTitle>
           <CardDescription>
-            Enter Token ID (e.g. 1) or Serial Number
+            Try entering the Serial Number first.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -140,11 +152,12 @@ export default function PublicVerification() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="text-base"
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
             />
             <Button 
-              onClick={handleSearch} 
+              onClick={() => handleSearch()} 
               disabled={isLoading}
-              className="bg-gradient-to-r from-blue-600 to-indigo-700"
+              className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white"
             >
               {isLoading ? 'Verifying...' : 'Verify'}
             </Button>
@@ -161,7 +174,6 @@ export default function PublicVerification() {
             </AlertDescription>
           </Alert>
           
-          {/* 复用 UI_UX 中的时间轴组件，数据已适配 */}
           <ProductLifecycleTimeline product={foundProduct} />
         </div>
       )}

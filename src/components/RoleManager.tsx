@@ -1,4 +1,4 @@
-// 文件路径: src/components/RoleManager.tsx
+// 文件路径: src/components/RoleManager.tsx adw
 
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './ui/card';
